@@ -1,0 +1,495 @@
+#!/usr/bin/python
+# coding: utf-8
+import sys, random, pygame
+import pygame.locals as LOCALS
+
+CELL_SIZE = (30, 30) # px
+FALL_INTERVAL = 1000 # ms
+GRID_SIZE = (10, 22) # cells
+KEY_INTERVAL = 125 # ms
+MAX_FPS = 420
+MAX_SHAPE_LENGTH = 4 # cells
+SCORE_INTERVAL = 250 # ms
+SCOREBOARD_PADDING = (10, 2) # px
+SHAPES = (
+    # 0 ... empty, 1..7 ... fill
+    # List to prevent automatic tuple flattening
+    [
+        (6, 6, 6, 6)
+    ],
+    (
+        (3, 3, 3),
+        (0, 0, 3)
+    ),
+    (
+        (7, 7, 7),
+        (7, 0, 0)
+    ),
+    (
+        (4, 4),
+        (4, 4)
+    ),
+    (
+        (0, 2, 2),
+        (2, 2, 0)
+    ),
+    (
+        (5, 5, 5),
+        (0, 5, 0)
+    ),
+    (
+        (1, 1, 0),
+        (0, 1, 1)
+    )
+)
+
+BOARD_SIZE = (CELL_SIZE[0] * GRID_SIZE[0], CELL_SIZE[1] * GRID_SIZE[1]) # px
+SCOREBOARD_SIZE = (BOARD_SIZE[0], 30) # px
+WIN_SIZE = (BOARD_SIZE[0], BOARD_SIZE[1] + SCOREBOARD_SIZE[1]) # px
+
+# Barvy (RGB(A))
+TRANSPARENT = (0, 0, 0, 0)
+WHITE = (255, 255, 255)
+LIGHT_GRAY = (222, 222, 222)
+DARK_GRAY = (111, 111, 111)
+BLACK = (0, 0, 0)
+RED = (255, 0, 0)
+GREEN = (0, 255, 0)
+BLUE = (0, 0, 255)
+YELLOW = (255, 255, 0)
+PURPLE = (255, 0, 255)
+CYAN = (0, 255, 255)
+ORANGE = (255, 128, 0)
+LIGHT_RED = (255, 160, 160)
+
+COLORS = (
+    TRANSPARENT,
+    RED,
+    GREEN,
+    BLUE,
+    YELLOW,
+    PURPLE,
+    CYAN,
+    ORANGE
+)
+
+pygame.init()
+pygame.font.init()
+
+FONT = pygame.font.SysFont('Arial', 20)
+
+def clear_row(row):
+    global redraw
+    for x in range(0, GRID_SIZE[0]):
+        for y in range(row, 0, -1):
+            stones[y][x] = stones[y - 1][x]
+        stones[0][x] = 0
+    redraw = 1
+
+def clear_stones():
+    global stones
+    stones = []
+    for y in range(0, GRID_SIZE[1]):
+        stones.append([])
+        for x in range(0, GRID_SIZE[0]):
+            stones[y].append(0)
+
+def deep_tuple_to_list(nested_tuple):
+    if isinstance(nested_tuple, tuple):
+        return list(map(deep_tuple_to_list, nested_tuple))
+    return nested_tuple
+
+def draw_all_stones():
+    for y in range(0, GRID_SIZE[1]):
+        for x in range(0, GRID_SIZE[0]):
+            draw_cell(stones_surface, x, y, COLORS[stones[y][x]])
+
+def draw_cell(surface, x, y, color):
+    return pygame.draw.rect(surface, color, (x * CELL_SIZE[0], y * CELL_SIZE[1],
+        CELL_SIZE[0], CELL_SIZE[1]))
+
+def draw_grid():
+    # Pozadí
+    grid_surface.fill(WHITE)
+    grid_surface.fill(LIGHT_RED, (0, 0, WIN_SIZE[0], CELL_SIZE[1] * MAX_SHAPE_LENGTH))
+
+    # Vertikální čáry
+    for i in range(1, GRID_SIZE[0]):
+        x = CELL_SIZE[0] * i
+        pygame.draw.line(grid_surface, LIGHT_GRAY, (x, 0), (x, WIN_SIZE[1]))
+
+    # Horizontální čáry
+    pygame.draw.line(grid_surface, DARK_GRAY, (0, 0), (WIN_SIZE[0], 0))
+    for i in range(1, GRID_SIZE[1]):
+        y = CELL_SIZE[1] * i
+        pygame.draw.line(grid_surface, LIGHT_GRAY, (0, y), (WIN_SIZE[0], y))
+
+def draw_stone(surface):
+    update_rects = []
+    for y in range(0, len(active_stone_shape)):
+        for x in range(0, len(active_stone_shape[y])):
+            color_id = active_stone_shape[y][x]
+            if color_id == 0:
+                continue
+            update_rects.append(draw_cell(
+                surface,
+                x + active_stone_position[0],
+                y + active_stone_position[1],
+                COLORS[color_id]
+            ))
+    return update_rects
+
+def fall_stone():
+    again = 1
+    while again:
+        again = move_stone(2)
+
+def get_shape():
+    shape = SHAPES[random.randrange(0, len(SHAPES))]
+    if isinstance(shape, tuple):
+        shape = deep_tuple_to_list(shape)
+    else:
+        shape = [deep_tuple_to_list(shape[0])]
+    return shape
+
+def spawn_stone():
+    global active_stone_position, active_stone_shape
+    active_stone_shape = get_shape()
+    for i in range(0, random.randrange(0, 4) + 1):
+        active_stone_shape = rotate_clockwise(active_stone_shape)
+    active_stone_position = [
+        random.randrange(0, GRID_SIZE[0] - len(active_stone_shape[0])),
+        0
+    ]
+
+def init():
+    global game_on, menu_init, playing, score, win
+
+    clock = pygame.time.Clock()
+    win = pygame.display.set_mode((WIN_SIZE[0], WIN_SIZE[1]))
+    pygame.display.set_caption('Tetris')
+
+    menu_init = 1
+    playing = 0
+    score = 0
+
+    game_on = 1
+    while game_on:
+        if playing:
+            play()
+        else:
+            menu()
+        clock.tick(MAX_FPS)
+
+def lose():
+    global menu_init, playing, score
+    score = pygame.time.get_ticks() - start_time
+    menu_init = 1
+    playing = 0
+
+def menu():
+    if menu_init:
+        new_menu()
+    user_input()
+
+def move_stone(direction):
+    # Doprava
+    if direction == 1:
+        return move_stone_right()
+    # Dolu
+    if direction == 2:
+        return move_stone_down()
+    # Doleva
+    if direction == 3:
+        return move_stone_left()
+
+def move_stone_down():
+    global active_stone_position
+
+    if active_stone_position[1] + len(active_stone_shape) >= GRID_SIZE[1]:
+        place_stone()
+        return 0
+
+    for x in range(0, len(active_stone_shape[0])):
+        for y in range(len(active_stone_shape) - 1, -1, -1):
+            if active_stone_shape[y][x] > 0:
+                if stones[active_stone_position[1] + y + 1][
+                        active_stone_position[0] + x] != 0:
+                    place_stone()
+                    return 0
+                break
+
+    active_stone_position[1] += 1
+    return 1
+
+def move_stone_left():
+    global active_stone_position
+
+    if active_stone_position[0] <= 0:
+        return 0
+
+    for y in range(0, len(active_stone_shape)):
+        for x in range(0, len(active_stone_shape[0])):
+            if active_stone_shape[y][x] > 0:
+                if stones[active_stone_position[1] + y][
+                        active_stone_position[0] + x - 1] != 0:
+                    return 0
+                break
+
+    active_stone_position[0] -= 1
+    return 1
+
+def move_stone_right():
+    global active_stone_position
+
+    if active_stone_position[0] >= GRID_SIZE[0] - len(active_stone_shape[0]):
+        return 0
+
+    for y in range(0, len(active_stone_shape)):
+        for x in range(len(active_stone_shape[0]) - 1, -1, -1):
+            if active_stone_shape[y][x] > 0:
+                if stones[active_stone_position[1] + y][
+                        active_stone_position[0] + x + 1 ] != 0:
+                    return 0
+                break
+
+    active_stone_position[0] += 1
+    return 1
+
+def new_game():
+    global last_time, start_time
+    global fall_time_counter, key_hold_time_counter, score_time_counter
+    global active_stone_surface, grid_surface, stones_surface
+    global last_draw_area
+    global active_stone_change, redraw
+    global display_update, render_score_update, render_update
+    global game_init
+
+    start_time = pygame.time.get_ticks()
+    last_time = start_time
+
+    active_stone_surface = pygame.surface.Surface(BOARD_SIZE, pygame.SRCALPHA, 32)
+    grid_surface = pygame.surface.Surface(BOARD_SIZE)
+    stones_surface = pygame.surface.Surface(BOARD_SIZE, pygame.SRCALPHA, 32)
+
+    fall_time_counter = 0
+    key_hold_time_counter = 0
+    score_time_counter = 0
+    active_stone_change = 0
+    redraw = 0
+    display_update = 0
+    render_score_update = 1
+    render_update = 1
+
+    draw_grid()
+
+    clear_stones()
+    spawn_stone()
+    last_draw_area = draw_stone(active_stone_surface)
+
+    game_init = 0
+
+def new_menu():
+    global menu_init, menu_surface
+
+    menu_surface = pygame.surface.Surface(WIN_SIZE)
+
+    menu_surface.fill(WHITE)
+    win.blit(menu_surface, (0, 0))
+
+    if score:
+        text = FONT.render('Hra skončila', True, BLACK)
+        win.blit(text, (20, 50))
+
+        text = FONT.render('Dosažené skóre: ' + str(score), True, BLACK)
+        win.blit(text, (20, 150))
+
+    text = FONT.render('Zmáčkněte mezerník pro novou hru', True, BLACK)
+    win.blit(text, (20, 300))
+
+    pygame.display.update()
+    menu_init = 0
+
+def place_stone():
+    global stones
+    if active_stone_position[1] < MAX_SHAPE_LENGTH:
+        lose()
+    clear_rows_list = []
+    for shape_y in range(0, len(active_stone_shape)):
+        y = shape_y + active_stone_position[1]
+        for shape_x in range(0, len(active_stone_shape[shape_y])):
+            x = shape_x + active_stone_position[0]
+            if active_stone_shape[shape_y][shape_x] > 0:
+                stones[y][x] = active_stone_shape[shape_y][shape_x]
+            draw_stone(stones_surface)
+        clear_row_state = 1
+        for x in range(0, GRID_SIZE[0]):
+            if stones[y][x] == 0:
+                clear_row_state = 0
+                break
+        if clear_row_state:
+            clear_rows_list.append(y)
+    i = 0
+    clear_rows_list.sort(reverse=True)
+    for row in clear_rows_list:
+        clear_row(row + i)
+        i += 1
+    spawn_stone()
+    active_stone_change = 1
+    return 1
+
+def play():
+    global fall_time_counter, key_hold_time_counter, score_time_counter
+    global last_draw_area
+    global active_stone_change, redraw
+    global display_update, render_score_update, render_update
+
+    if game_init:
+        new_game()
+
+    time_tick()
+    fall_time_counter += delta_time
+    score_time_counter += delta_time
+
+    if fall_time_counter >= FALL_INTERVAL:
+        move_stone(2)
+        active_stone_change = 1
+        fall_time_counter = 0
+
+    user_input()
+
+    if key_hold_time_counter > 0:
+        key_hold_time_counter -= delta_time
+
+    if score_time_counter >= SCORE_INTERVAL:
+        render_score_update = 1
+        score_time_counter = 0
+
+    if redraw:
+        draw_all_stones()
+        render_update = 1
+        redraw = 0
+
+    if active_stone_change:
+        for i in last_draw_area:
+            pygame.draw.rect(active_stone_surface, TRANSPARENT, i)
+        last_draw_area = draw_stone(active_stone_surface)
+        active_stone_change = 0
+        render_update = 1
+
+    if render_update:
+        win.blit(grid_surface, (0, 0))
+        win.blit(stones_surface, (0, 0))
+        win.blit(active_stone_surface, (0, 0))
+        pygame.display.update()
+        display_update = 1
+        render_update = 0
+
+    if render_score_update:
+        pygame.draw.rect(win, BLACK, (0, BOARD_SIZE[1] + 1, SCOREBOARD_SIZE[0], WIN_SIZE[1]))
+        text = FONT.render('Skóre: ' + str(pygame.time.get_ticks() - start_time), True, GREEN)
+        win.blit(text, (SCOREBOARD_PADDING[0], BOARD_SIZE[1] + SCOREBOARD_PADDING[1]))
+        display_update = 1
+        render_score_update = 0
+
+    if display_update:
+        pygame.display.update()
+        display_update = 0
+
+def rotate():
+    # Zkusí, jestli jde kámen otočit a pokud ano, udělá tak
+    global active_stone_change, active_stone_shape
+
+    active_stone_shape = rotate_clockwise(active_stone_shape)
+    ok = 1
+    if (
+        active_stone_position[0] < 0 or
+        active_stone_position[0] + len(active_stone_shape[0]) > GRID_SIZE[0] or
+        active_stone_position[1] + len(active_stone_shape) > GRID_SIZE[1]
+    ):
+        ok = 0
+    else:
+        for shape_y in range(0, len(active_stone_shape)):
+            y = shape_y + active_stone_position[1]
+            for shape_x in range(0, len(active_stone_shape[shape_y])):
+                x = shape_x + active_stone_position[0]
+                if (
+                    active_stone_shape[shape_y][shape_x] > 0 and
+                    stones[y][x] > 0
+                ):
+                    ok = 0
+                    break
+            if not ok:
+                break
+    if ok:
+        active_stone_change = 1
+    else:
+        active_stone_shape = rotate_counterclockwise(active_stone_shape)
+
+def rotate_clockwise(list_2d):
+    temp = []
+    for i in list_2d[0]:
+        temp.append([])
+    for i in range(len(list_2d) - 1, -1, -1):
+        for j in range(0, len(list_2d[i])):
+            temp[j].append(list_2d[i][j])
+    return temp
+
+def rotate_counterclockwise(list_2d):
+    temp = []
+    for i in list_2d[0]:
+        temp.append([])
+    for i in range(0, len(list_2d)):
+        for j in range(0, len(list_2d[i])):
+            temp[abs(j - len(list_2d[i]) + 1)].append(list_2d[i][j])
+    return temp
+
+def time_tick():
+    global delta_time, last_time
+    delta_time = pygame.time.get_ticks() - last_time
+    last_time = pygame.time.get_ticks()
+    return delta_time
+
+def user_input():
+    global game_on
+    global game_init, playing
+    global active_stone_change, key_hold_time_counter
+
+    for e in pygame.event.get():
+        # Ukončit hru
+        if e.type == LOCALS.QUIT or (
+            e.type == LOCALS.KEYUP and
+            e.key == LOCALS.K_ESCAPE
+        ):
+            game_on = 0
+            return
+
+        if playing:
+            # Ovládání při hře
+            if key_hold_time_counter > 0:
+                break
+
+            if e.type == LOCALS.KEYDOWN:
+                if e.key == LOCALS.K_LEFT:
+                    active_stone_change = move_stone(3)
+                elif e.key == LOCALS.K_RIGHT:
+                    active_stone_change = move_stone(1)
+                elif e.key == LOCALS.K_DOWN:
+                    active_stone_change = move_stone(2)
+                elif e.key == LOCALS.K_UP:
+                    rotate()
+                elif e.key == LOCALS.K_SPACE:
+                    fall_stone()
+                    active_stone_change = 1
+
+                key_hold_time_counter = KEY_INTERVAL
+        else:
+            # Ovládání v menu
+            if (
+                e.type == LOCALS.KEYDOWN and
+                e.key == LOCALS.K_SPACE
+            ):
+                game_init = 1
+                playing = 1
+
+init()
